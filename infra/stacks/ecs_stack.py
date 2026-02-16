@@ -52,7 +52,7 @@ class EcsStack(Stack):
         )
 
         # ECS Cluster
-        cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
+        cluster = ecs.Cluster(self, "Cluster", cluster_name="MerckDevOpsStack-Cluster", vpc=vpc)
 
         # EC2 Auto Scaling Group capacity
         asg = autoscaling.AutoScalingGroup(
@@ -95,6 +95,7 @@ class EcsStack(Stack):
         service = ecs.Ec2Service(
             self,
             "Service",
+            service_name="MerckDevOpsStack-Service",
             cluster=cluster,
             task_definition=task_definition,
             desired_count=1,

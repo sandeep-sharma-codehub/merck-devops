@@ -8,6 +8,9 @@ Python REST API with AWS deployment pipeline. Built with FastAPI, containerized 
 # Install dependencies
 pip install ".[dev]"
 
+# Create .env from example (required — app won't start without it)
+cp .env.example .env
+
 # Run the API
 uvicorn app.main:app --reload
 
@@ -22,6 +25,7 @@ ruff format --check app/ tests/
 ## Docker
 
 ```bash
+# Ensure .env exists (see above), then:
 docker-compose up --build
 ```
 
