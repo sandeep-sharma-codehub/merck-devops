@@ -1,9 +1,10 @@
-from aws_cdk import CfnOutput, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_autoscaling as autoscaling
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
@@ -54,20 +55,55 @@ class EcsStack(Stack):
         # ECS Cluster
         cluster = ecs.Cluster(self, "Cluster", cluster_name="MerckDevOpsStack-Cluster", vpc=vpc)
 
+        # IAM role for EC2 instances to register with ECS cluster
+        ec2_role = iam.Role(
+            self,
+            "Ec2Role",
+            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AmazonEC2ContainerServiceforEC2Role"
+                ),
+            ],
+        )
+
+        # Security group for EC2 instances (allows ALB traffic on port 8000)
+        ec2_sg = ec2.SecurityGroup(
+            self,
+            "Ec2Sg",
+            vpc=vpc,
+            description="ECS EC2 instances security group",
+        )
+
+        # Launch Template (replaces deprecated Launch Configuration)
+        user_data = ec2.UserData.for_linux()
+        launch_template = ec2.LaunchTemplate(
+            self,
+            "LaunchTemplate",
+            instance_type=ec2.InstanceType("t3.small"),
+            machine_image=ecs.EcsOptimizedImage.amazon_linux2(),
+            user_data=user_data,
+            role=ec2_role,
+            security_group=ec2_sg,
+            require_imdsv2=True,
+        )
+
         # EC2 Auto Scaling Group capacity
         asg = autoscaling.AutoScalingGroup(
             self,
             "Asg",
             vpc=vpc,
-            instance_type=ec2.InstanceType("t3.small"),
-            machine_image=ecs.EcsOptimizedImage.amazon_linux2(),
+            launch_template=launch_template,
             desired_capacity=1,
             min_capacity=1,
             max_capacity=2,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
         )
         capacity_provider = ecs.AsgCapacityProvider(
-            self, "AsgCapacityProvider", auto_scaling_group=asg
+            self,
+            "AsgCapacityProvider",
+            auto_scaling_group=asg,
+            enable_managed_termination_protection=False,
         )
         cluster.add_asg_capacity_provider(capacity_provider)
 
@@ -91,14 +127,16 @@ class EcsStack(Stack):
             self, "Alb", vpc=vpc, internet_facing=True
         )
 
-        # ECS Service
+        # ECS Service (desired_count=0 for initial deploy to avoid chicken-and-egg
+        # problem — ECR is empty, so ECS can't pull an image yet.
+        # The initial-deploy.sh script pushes the image and scales up to 1.)
         service = ecs.Ec2Service(
             self,
             "Service",
             service_name="MerckDevOpsStack-Service",
             cluster=cluster,
             task_definition=task_definition,
-            desired_count=1,
+            desired_count=0,
         )
 
         # ALB listener and target
@@ -110,12 +148,12 @@ class EcsStack(Stack):
             health_check=elbv2.HealthCheck(
                 path="/health",
                 healthy_http_codes="200",
-                interval_secs=30,
+                interval=Duration.seconds(30),
             ),
         )
 
         # Security: ALB -> ECS on port 8000 only
-        service.connections.allow_from(alb, ec2.Port.tcp(8000), "ALB to ECS")
+        ec2_sg.connections.allow_from(alb, ec2.Port.tcp(8000), "ALB to ECS")
 
         # Outputs
         CfnOutput(self, "AlbDns", value=alb.load_balancer_dns_name)
