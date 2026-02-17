@@ -85,6 +85,8 @@ The GitHub Actions pipeline runs automatically on push to `main`:
 
 ## Architecture
 
+![Architecture Diagram](Architecture.png)
+
 - **VPC** with public and private subnets across 2 AZs
 - **ECR** repository for Docker images
 - **ECS on EC2** (t3.small) with auto-scaling group
